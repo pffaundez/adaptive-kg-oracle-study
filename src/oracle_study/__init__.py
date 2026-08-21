@@ -1,1 +1,4 @@
-"""Oracle study validation, reward, and oracle calculation."""
+"""Oracle feasibility study for adaptive KG workflows."""
+
+__version__ = "0.1.0"
+
