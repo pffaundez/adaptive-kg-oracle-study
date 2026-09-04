@@ -1,0 +1,34 @@
+schema_version: 1
+
+id: W3
+slug: schema
+name: Schema-Guided Generation
+description: >-
+  Retrieve schema evidence relevant to the question and condition SPARQL
+  generation on that evidence.
+
+steps:
+  - id: retrieve_schema
+    capability: schema_retrieval
+    inputs:
+      - question
+    produces:
+      - schema_evidence
+
+  - id: generate
+    capability: sparql_generation
+    inputs:
+      - question
+      - schema_evidence
+    produces:
+      - generated_query
+
+limits:
+  max_initial_generations: 1
+  max_repairs: 0
+  max_sparql_executions: 0
+
+output:
+  final_query:
+    select: generated_query
+

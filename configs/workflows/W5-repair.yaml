@@ -1,0 +1,61 @@
+schema_version: 1
+
+id: W5
+slug: repair
+name: Execution-Guided Repair
+description: >-
+  Generate and execute a SPARQL query. If execution returns an error or an
+  empty result, perform exactly one repair and execute the repaired query once.
+
+steps:
+  - id: generate
+    capability: sparql_generation
+    inputs:
+      - question
+    produces:
+      - generated_query
+
+  - id: execute_initial
+    capability: query_execution
+    inputs:
+      - generated_query
+    produces:
+      - initial_execution
+
+  - id: repair
+    capability: query_repair
+    condition:
+      source: initial_execution
+      status_in:
+        - execution_error
+        - empty_result
+    inputs:
+      - question
+      - generated_query
+      - initial_execution
+    produces:
+      - repaired_query
+
+  - id: execute_repaired
+    capability: query_execution
+    condition:
+      step_executed: repair
+    inputs:
+      - repaired_query
+    produces:
+      - repaired_execution
+
+limits:
+  max_initial_generations: 1
+  max_repairs: 1
+  max_sparql_executions: 2
+
+output:
+  final_query:
+    prefer:
+      - repaired_query
+      - generated_query
+  workflow_execution:
+    prefer:
+      - repaired_execution
+      - initial_execution

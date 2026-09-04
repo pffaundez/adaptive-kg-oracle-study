@@ -1,0 +1,87 @@
+schema_version: 1
+
+id: W6
+slug: full
+name: Full Grounded Schema-Guided Repair
+description: >-
+  Link entities and relations, retrieve relevant schema evidence, generate and
+  execute SPARQL, and perform one execution-guided repair when the initial
+  execution returns an error or an empty result.
+
+steps:
+  - id: link_entities_relations
+    capability: entity_relation_linking
+    inputs:
+      - question
+    produces:
+      - entity_candidates
+      - relation_candidates
+
+  - id: retrieve_schema
+    capability: schema_retrieval
+    inputs:
+      - question
+      - entity_candidates
+      - relation_candidates
+    produces:
+      - schema_evidence
+
+  - id: generate
+    capability: sparql_generation
+    inputs:
+      - question
+      - entity_candidates
+      - relation_candidates
+      - schema_evidence
+    produces:
+      - generated_query
+
+  - id: execute_initial
+    capability: query_execution
+    inputs:
+      - generated_query
+    produces:
+      - initial_execution
+
+  - id: repair
+    capability: query_repair
+    condition:
+      source: initial_execution
+      status_in:
+        - execution_error
+        - empty_result
+    inputs:
+      - question
+      - generated_query
+      - initial_execution
+      - entity_candidates
+      - relation_candidates
+      - schema_evidence
+    produces:
+      - repaired_query
+
+  - id: execute_repaired
+    capability: query_execution
+    condition:
+      step_executed: repair
+    inputs:
+      - repaired_query
+    produces:
+      - repaired_execution
+
+limits:
+  max_initial_generations: 1
+  max_repairs: 1
+  max_sparql_executions: 2
+  max_entity_candidates: 10
+  max_relation_candidates: 10
+
+output:
+  final_query:
+    prefer:
+      - repaired_query
+      - generated_query
+  workflow_execution:
+    prefer:
+      - repaired_execution
+      - initial_execution

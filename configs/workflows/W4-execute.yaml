@@ -1,0 +1,34 @@
+schema_version: 1
+
+id: W4
+slug: execute
+name: Generation with Execution
+description: >-
+  Generate and execute one SPARQL query. Execution is observable and logged,
+  but cannot modify the generated query in this control workflow.
+
+steps:
+  - id: generate
+    capability: sparql_generation
+    inputs:
+      - question
+    produces:
+      - generated_query
+
+  - id: execute_initial
+    capability: query_execution
+    inputs:
+      - generated_query
+    produces:
+      - initial_execution
+
+limits:
+  max_initial_generations: 1
+  max_repairs: 0
+  max_sparql_executions: 1
+
+output:
+  final_query:
+    select: generated_query
+  workflow_execution:
+    select: initial_execution

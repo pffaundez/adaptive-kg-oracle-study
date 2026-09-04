@@ -1,0 +1,25 @@
+schema_version: 1
+
+id: W1
+slug: direct
+name: Direct Generation
+description: >-
+  Generate one SPARQL query directly from the natural-language question,
+  without grounding, schema retrieval, or execution feedback.
+
+steps:
+  - id: generate
+    capability: sparql_generation
+    inputs:
+      - question
+    produces:
+      - generated_query
+
+limits:
+  max_initial_generations: 1
+  max_repairs: 0
+  max_sparql_executions: 0
+
+output:
+  final_query:
+    select: generated_query

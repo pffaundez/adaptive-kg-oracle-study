@@ -1,0 +1,37 @@
+schema_version: 1
+
+id: W2
+slug: grounded
+name: Grounded Generation
+description: >-
+  Link entities and relations in the question and use the resulting candidates
+  as grounding evidence for SPARQL generation.
+
+steps:
+  - id: link_entities_relations
+    capability: entity_relation_linking
+    inputs:
+      - question
+    produces:
+      - entity_candidates
+      - relation_candidates
+
+  - id: generate
+    capability: sparql_generation
+    inputs:
+      - question
+      - entity_candidates
+      - relation_candidates
+    produces:
+      - generated_query
+
+limits:
+  max_initial_generations: 1
+  max_repairs: 0
+  max_sparql_executions: 0
+  max_entity_candidates: 10
+  max_relation_candidates: 10
+
+output:
+  final_query:
+    select: generated_query
