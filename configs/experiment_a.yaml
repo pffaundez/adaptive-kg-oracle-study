@@ -1,0 +1,114 @@
+schema_version: 1
+
+experiment:
+  id: experiment_a_workflow_oracle
+  name: Workflow Selection Oracle
+  description: >
+    Compare the best fixed workflow against a per-question oracle
+    that retrospectively selects the best complete workflow.
+  seed: 42
+
+dataset:
+  name: qald7
+  path: data/raw/qald7/qald-7-test-multilingual.json
+  split: test
+  knowledge_graph: dbpedia
+  endpoint: https://dbpedia.org/sparql
+  language: en
+
+  # Pilot configuration. Change to null for the definitive run.
+  max_questions: 10
+  strict: true
+
+model:
+  provider: huggingface
+  model_id: Qwen/Qwen3-30B-A3B-Instruct-2507
+
+  # Replace with an exact Hugging Face commit before final experiments.
+  revision: null
+
+  architecture: mixture_of_experts
+  inference_mode: non_thinking
+  seed: 42
+
+  loading:
+    dtype: bfloat16
+    quantization: null
+    device_map: auto
+
+  generation:
+    do_sample: false
+    max_new_tokens: 1024
+
+  repetitions: 1
+
+capabilities:
+  sparql_generation:
+    prompt_template: prompts/sparql_generation.txt
+
+workflows:
+  definitions_directory: configs/workflows
+
+  # Enable workflows progressively during implementation.
+  enabled:
+    - W1-direct.yaml
+
+execution:
+  sparql_timeout_seconds: 30
+  continue_on_workflow_failure: true
+  cache_endpoint_responses: true
+  save_intermediate_traces: true
+
+evaluation:
+  per_question_quality: answer_f1
+  primary_report_metric: qald_macro_f1
+
+  report_metrics:
+    - macro_precision
+    - macro_recall
+    - qald_macro_f1
+    - mean_question_f1
+    - execution_accuracy
+    - executability
+    - normalized_exact_match
+    - empty_result_rate
+
+  answer_normalization:
+    unicode_form: NFC
+    lowercase_language_tags: true
+    canonicalize_numeric_literals: false
+    canonicalize_boolean_literals: false
+    normalize_dbpedia_https: false
+
+  evaluation_execution:
+    enabled: true
+    applies_to_all_workflows: true
+    use_workflow_execution_cache: true
+    
+cost:
+  record:
+    - input_tokens
+    - output_tokens
+    - llm_calls
+    - workflow_sparql_executions
+    - evaluation_sparql_executions
+    - generation_latency_seconds
+
+oracle:
+  types:
+    - quality
+    - quality_cost
+
+  tie_breaker: lowest_cost
+
+  lambdas:
+    - 0.0
+    - 0.01
+    - 0.05
+    - 0.1
+
+output:
+  directory: results/experiment_a
+  save_generated_queries: true
+  save_intermediate_traces: true
+  save_endpoint_responses: true
