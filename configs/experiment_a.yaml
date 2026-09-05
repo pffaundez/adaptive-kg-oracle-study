@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  id: experiment_a_workflow_oracle
+  id: experiment_a_workflow_oracle_dbpedia_2026_09_05
   name: Workflow Selection Oracle
   description: >
     Compare the best fixed workflow against a per-question oracle
@@ -16,17 +16,21 @@ dataset:
   endpoint: https://dbpedia.org/sparql
   language: en
 
-  # Pilot configuration. Change to null for the definitive run.
+  # Applied after the gold-snapshot eligibility filter.
   max_questions: 10
   strict: true
+
+  gold_snapshot:
+    path: data/processed/qald7-dbpedialive-2026-09-05.jsonl
+    # Replace this value with gold_file_sha256 printed by the validator.
+    sha256: REPLACE_WITH_VALIDATOR_GOLD_FILE_SHA256
+    endpoint: https://dbpedia.org/sparql
+    eligible_only: true
 
 model:
   provider: huggingface
   model_id: Qwen/Qwen3-30B-A3B-Instruct-2507
-
-  # Replace with an exact Hugging Face commit before final experiments.
-  revision: null
-
+  revision: "0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe"
   architecture: mixture_of_experts
   inference_mode: non_thinking
   seed: 42
@@ -34,6 +38,7 @@ model:
   loading:
     dtype: bfloat16
     quantization: null
+    cuda_visible_devices: "0,1"
     device_map: auto
 
   generation:
@@ -51,7 +56,8 @@ workflows:
 
   # Enable workflows progressively during implementation.
   enabled:
-    - W1-direct.yaml
+    #- W1-direct.yaml
+    - W4-execute.yaml
 
 execution:
   sparql_timeout_seconds: 30
@@ -108,7 +114,14 @@ oracle:
     - 0.1
 
 output:
-  directory: results/experiment_a
+  # Snapshot-specific directory prevents collisions with historical-gold runs.
+  directory: results/experiment_a/dbpedia-2026-09-05
+  result_file_template: "{workflow_id}-results.jsonl"
+
+  duplicate_policy: skip
+  flush_every: 1
+  fsync: false
+
   save_generated_queries: true
   save_intermediate_traces: true
   save_endpoint_responses: true
