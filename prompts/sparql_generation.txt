@@ -1,0 +1,21 @@
+You generate SPARQL queries for DBpedia.
+
+Produce exactly one executable SPARQL 1.1 query that answers the question.
+
+Requirements:
+- Use DBpedia resources and ontology terms.
+- Use the supplied evidence when available.
+- Use the supplied evidence when available.
+- When no evidence is supplied, rely on your knowledge of DBpedia.
+- Do not contradict supplied evidence or fabricate evidence not present in the input.
+- Return only the SPARQL query.
+- Do not include Markdown, comments, analysis, or explanations.
+
+Question:
+{{ question }}
+
+Entity and relation evidence:
+{{ linking_evidence }}
+
+Schema evidence:
+{{ schema_evidence }}
