@@ -167,6 +167,8 @@ class SPARQLRepairCapability:
         *,
         failed_query: str,
         execution_feedback: Any,
+        linking_evidence: Any | None = None,
+        schema_evidence: Any | None = None,
     ) -> tuple[tuple[dict[str, str], ...], dict[str, Any]]:
         self.load_prompt()
         assert self._template is not None
@@ -176,6 +178,14 @@ class SPARQLRepairCapability:
             failed_query=failed_query,
             execution_feedback=execution_feedback,
         )
+        if linking_evidence is not None:
+            prompt += "\n\nEntity/relation evidence:\n" + json.dumps(
+                linking_evidence, ensure_ascii=False, indent=2, sort_keys=True
+            )
+        if schema_evidence is not None:
+            prompt += "\n\nSchema evidence:\n" + json.dumps(
+                schema_evidence, ensure_ascii=False, indent=2, sort_keys=True
+            )
         return ({"role": "user", "content": prompt},), feedback
 
     def repair(
@@ -184,11 +194,15 @@ class SPARQLRepairCapability:
         *,
         failed_query: str,
         execution_feedback: Any,
+        linking_evidence: Any | None = None,
+        schema_evidence: Any | None = None,
     ) -> SPARQLRepairOutput:
         messages, feedback = self.build_messages(
             question,
             failed_query=failed_query,
             execution_feedback=execution_feedback,
+            linking_evidence=linking_evidence,
+            schema_evidence=schema_evidence,
         )
         result = self._model.generate(
             messages,

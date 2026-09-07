@@ -37,17 +37,16 @@ steps:
       - generated_query
 
   - id: execute_initial
-    capability: query_execution
+    capability: sparql_execution
     inputs:
       - generated_query
     produces:
       - initial_execution
 
   - id: repair
-    capability: query_repair
-    condition:
-      source: initial_execution
-      status_in:
+    capability: sparql_repair
+    when:
+      execution_status_in:
         - execution_error
         - empty_result
     inputs:
@@ -61,9 +60,9 @@ steps:
       - repaired_query
 
   - id: execute_repaired
-    capability: query_execution
-    condition:
-      step_executed: repair
+    capability: sparql_execution
+    when:
+      output_exists: repaired_query
     inputs:
       - repaired_query
     produces:
@@ -71,17 +70,19 @@ steps:
 
 limits:
   max_initial_generations: 1
+  max_linking_calls: 1
+  max_schema_retrieval_calls: 1
   max_repairs: 1
   max_sparql_executions: 2
   max_entity_candidates: 10
   max_relation_candidates: 10
+  max_class_candidates: 10
+  max_property_candidates: 10
 
 output:
   final_query:
-    prefer:
-      - repaired_query
-      - generated_query
-  workflow_execution:
-    prefer:
-      - repaired_execution
-      - initial_execution
+    prefer: repaired_query
+    fallback: generated_query
+  final_execution:
+    prefer: repaired_execution
+    fallback: initial_execution

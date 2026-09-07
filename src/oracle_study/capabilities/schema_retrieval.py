@@ -179,7 +179,12 @@ class SchemaRetrievalCapability:
         self.config = config
         self._template: str | None = None
 
-    def build_messages(self, question: str) -> tuple[dict[str, str], ...]:
+    def build_messages(
+        self,
+        question: str,
+        *,
+        linking_evidence: Any | None = None,
+    ) -> tuple[dict[str, str], ...]:
         if not isinstance(question, str) or not question.strip():
             raise ValueError("question must be non-empty.")
         if self._template is None:
@@ -196,10 +201,25 @@ class SchemaRetrievalCapability:
                 f"Schema prompt must contain {PLACEHOLDER!r} exactly once."
             )
         prompt = self._template.replace(PLACEHOLDER, question.strip())
+        if linking_evidence is not None:
+            prompt += "\n\nEntity/relation candidates:\n" + json.dumps(
+                linking_evidence,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
         return ({"role": "user", "content": prompt},)
 
-    def retrieve(self, question: str) -> SchemaRetrievalOutput:
-        messages = self.build_messages(question)
+    def retrieve(
+        self,
+        question: str,
+        *,
+        linking_evidence: Any | None = None,
+    ) -> SchemaRetrievalOutput:
+        messages = self.build_messages(
+            question,
+            linking_evidence=linking_evidence,
+        )
         generation = self._model.generate(
             messages, max_new_tokens=self.config.max_new_tokens
         )

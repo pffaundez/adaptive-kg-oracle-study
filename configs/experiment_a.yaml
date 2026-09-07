@@ -62,7 +62,7 @@ workflows:
 
   # Enable workflows progressively during implementation.
   enabled:
-    - W3-schema.yaml
+    - W6-full.yaml
 
 execution:
   sparql_timeout_seconds: 30

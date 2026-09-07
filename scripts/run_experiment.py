@@ -56,6 +56,7 @@ from oracle_study.workflows.runner import (  # noqa: E402
     W3SchemaRunner,
     W4ExecuteRunner,
     W5RepairRunner,
+    W6FullRunner,
 )
 
 
@@ -165,12 +166,13 @@ def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
         "W3-schema.yaml": ("W3", W3SchemaRunner),
         "W4-execute.yaml": ("W4", W4ExecuteRunner),
         "W5-repair.yaml": ("W5", W5RepairRunner),
+        "W6-full.yaml": ("W6", W6FullRunner),
     }
     filename = enabled[0]
     if filename not in supported:
         raise ExperimentConfigurationError(
             "Supported workflows are W1-direct.yaml, W2-grounded.yaml, "
-            "W3-schema.yaml, W4-execute.yaml, and W5-repair.yaml."
+            "W3-schema.yaml, W4-execute.yaml, W5-repair.yaml, and W6-full.yaml."
         )
     return supported[filename]
 
@@ -240,19 +242,19 @@ def main() -> int:
     output_data = _mapping(config.get("output"), label="output")
     workflow_id, runner_class = _select_workflow(workflows)
     linking_data = None
-    if workflow_id == "W2":
+    if workflow_id in {"W2", "W6"}:
         linking_data = _mapping(
             capabilities.get("entity_relation_linking"),
             label="capabilities.entity_relation_linking",
         )
     schema_data = None
-    if workflow_id == "W3":
+    if workflow_id in {"W3", "W6"}:
         schema_data = _mapping(
             capabilities.get("schema_retrieval"),
             label="capabilities.schema_retrieval",
         )
     repair_data = None
-    if workflow_id == "W5":
+    if workflow_id in {"W5", "W6"}:
         repair_data = _mapping(
             capabilities.get("sparql_repair"),
             label="capabilities.sparql_repair",
