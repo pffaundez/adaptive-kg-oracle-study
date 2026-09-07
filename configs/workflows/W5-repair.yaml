@@ -4,8 +4,8 @@ id: W5
 slug: repair
 name: Execution-Guided Repair
 description: >-
-  Generate and execute a SPARQL query. If execution returns an error or an
-  empty result, perform exactly one repair and execute the repaired query once.
+  Generate and execute one SPARQL query. If execution fails or returns an empty
+  SELECT result, repair the query once and execute the repaired query once.
 
 steps:
   - id: generate
@@ -16,17 +16,16 @@ steps:
       - generated_query
 
   - id: execute_initial
-    capability: query_execution
+    capability: sparql_execution
     inputs:
       - generated_query
     produces:
       - initial_execution
 
   - id: repair
-    capability: query_repair
-    condition:
-      source: initial_execution
-      status_in:
+    capability: sparql_repair
+    when:
+      execution_status_in:
         - execution_error
         - empty_result
     inputs:
@@ -37,9 +36,9 @@ steps:
       - repaired_query
 
   - id: execute_repaired
-    capability: query_execution
-    condition:
-      step_executed: repair
+    capability: sparql_execution
+    when:
+      output_exists: repaired_query
     inputs:
       - repaired_query
     produces:
@@ -52,10 +51,8 @@ limits:
 
 output:
   final_query:
-    prefer:
-      - repaired_query
-      - generated_query
-  workflow_execution:
-    prefer:
-      - repaired_execution
-      - initial_execution
+    prefer: repaired_query
+    fallback: generated_query
+  final_execution:
+    prefer: repaired_execution
+    fallback: initial_execution

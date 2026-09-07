@@ -1,7 +1,7 @@
 schema_version: 1
 
 experiment:
-  id: experiment_a_workflow_oracle_dbpedia_2026_09_05
+  id: experiment_a_workflow_oracle
   name: Workflow Selection Oracle
   description: >
     Compare the best fixed workflow against a per-question oracle
@@ -19,13 +19,6 @@ dataset:
   # Applied after the gold-snapshot eligibility filter.
   max_questions: 10
   strict: true
-
-  gold_snapshot:
-    path: data/processed/qald7-dbpedialive-2026-09-05.jsonl
-    # Replace this value with gold_file_sha256 printed by the validator.
-    sha256: REPLACE_WITH_VALIDATOR_GOLD_FILE_SHA256
-    endpoint: https://dbpedia.org/sparql
-    eligible_only: true
 
 model:
   provider: huggingface
@@ -51,13 +44,16 @@ capabilities:
   sparql_generation:
     prompt_template: prompts/sparql_generation.txt
 
+  sparql_repair:
+    prompt_template: prompts/sparql_repair.txt
+
 workflows:
   definitions_directory: configs/workflows
 
   # Enable workflows progressively during implementation.
   enabled:
     #- W1-direct.yaml
-    - W4-execute.yaml
+    - W5-repair.yaml
 
 execution:
   sparql_timeout_seconds: 30
@@ -115,7 +111,7 @@ oracle:
 
 output:
   # Snapshot-specific directory prevents collisions with historical-gold runs.
-  directory: results/experiment_a/dbpedia-2026-09-05
+  directory: results/experiment_a
   result_file_template: "{workflow_id}-results.jsonl"
 
   duplicate_policy: skip

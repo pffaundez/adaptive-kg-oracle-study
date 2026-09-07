@@ -22,6 +22,10 @@ from oracle_study.capabilities.sparql_generation import (  # noqa: E402
     SPARQLGenerationCapability,
     SPARQLGenerationConfig,
 )
+from oracle_study.capabilities.sparql_repair import (  # noqa: E402
+    SPARQLRepairCapability,
+    SPARQLRepairConfig,
+)
 from oracle_study.datasets.qald7 import load_qald7  # noqa: E402
 from oracle_study.evaluation.answer_metrics import (  # noqa: E402
     AnswerNormalizationConfig,
@@ -41,6 +45,7 @@ from oracle_study.models.huggingface_model import (  # noqa: E402
 from oracle_study.workflows.runner import (  # noqa: E402
     W1DirectRunner,
     W4ExecuteRunner,
+    W5RepairRunner,
 )
 
 
@@ -147,11 +152,13 @@ def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
     supported = {
         "W1-direct.yaml": ("W1", W1DirectRunner),
         "W4-execute.yaml": ("W4", W4ExecuteRunner),
+        "W5-repair.yaml": ("W5", W5RepairRunner),
     }
     filename = enabled[0]
     if filename not in supported:
         raise ExperimentConfigurationError(
-            "Supported workflows are W1-direct.yaml and W4-execute.yaml."
+            "Supported workflows are W1-direct.yaml, W4-execute.yaml, "
+            "and W5-repair.yaml."
         )
     return supported[filename]
 
@@ -220,6 +227,12 @@ def main() -> int:
     evaluation_data = _mapping(config.get("evaluation"), label="evaluation")
     output_data = _mapping(config.get("output"), label="output")
     workflow_id, runner_class = _select_workflow(workflows)
+    repair_data = None
+    if workflow_id == "W5":
+        repair_data = _mapping(
+            capabilities.get("sparql_repair"),
+            label="capabilities.sparql_repair",
+        )
 
     experiment_id = experiment.get("id")
     if not isinstance(experiment_id, str) or not experiment_id.strip():
@@ -275,6 +288,23 @@ def main() -> int:
         linking_evidence=None,
         schema_evidence=None,
     )
+    repair = None
+    if repair_data is not None:
+        repair_config = SPARQLRepairConfig.from_mapping(
+            repair_data,
+            project_root=project_root,
+        )
+        repair = SPARQLRepairCapability(model, repair_config)
+        repair.build_messages(
+            examples[0].question,
+            failed_query="SELECT * WHERE { ?s ?p ?o }",
+            execution_feedback={
+                "status": "empty_result",
+                "query_form": "SELECT",
+                "rows": [],
+                "variables": ["s", "p", "o"],
+            },
+        )
 
     preview = {
         "experiment_id": experiment_id,
@@ -291,12 +321,15 @@ def main() -> int:
         print("Dry run completed; model weights were not loaded.")
         return 0
 
-    runner = runner_class(
-        experiment_id=experiment_id,
-        generation=generation,
-        executor=SPARQLExecutor(executor_config),
-        answer_normalization=normalization,
-    )
+    runner_kwargs = {
+        "experiment_id": experiment_id,
+        "generation": generation,
+        "executor": SPARQLExecutor(executor_config),
+        "answer_normalization": normalization,
+    }
+    if repair is not None:
+        runner_kwargs["repair"] = repair
+    runner = runner_class(**runner_kwargs)
 
     repetitions = int(model_data.get("repetitions", 1))
     if repetitions <= 0:
@@ -350,4 +383,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("Interrupted by user; completed JSONL records remain resumable.", file=sys.stderr)
         raise SystemExit(130)
-

@@ -12,6 +12,10 @@ from oracle_study.capabilities.sparql_generation import (
     SPARQLGenerationCapability,
     SPARQLGenerationOutput,
 )
+from oracle_study.capabilities.sparql_repair import (
+    SPARQLRepairCapability,
+    SPARQLRepairOutput,
+)
 from oracle_study.datasets.qald7 import QALD7Example
 from oracle_study.evaluation.answer_metrics import (
     AnswerMetrics,
@@ -30,6 +34,7 @@ class WorkflowRunStatus(str, Enum):
     GENERATION_ERROR = "generation_error"
     PARSE_ERROR = "parse_error"
     EXECUTION_ERROR = "execution_error"
+    REPAIR_ERROR = "repair_error"
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,7 @@ class WorkflowCost:
     input_tokens: int
     output_tokens: int
     llm_calls: int
+    repair_calls: int
     workflow_sparql_executions: int
     evaluation_sparql_executions: int
     generation_latency_seconds: float
@@ -73,6 +79,8 @@ class WorkflowRunResult:
     metrics: AnswerMetrics | None
     cost: WorkflowCost
     error: WorkflowRunError | None = None
+    repair: SPARQLRepairOutput | None = None
+    initial_execution: SPARQLExecutionResult | None = None
 
     @property
     def quality(self) -> float:
@@ -101,6 +109,12 @@ class WorkflowRunResult:
             "metrics": self.metrics.to_dict() if self.metrics is not None else None,
             "cost": self.cost.to_dict(),
             "error": self.error.to_dict() if self.error is not None else None,
+            "repair": self.repair.to_dict() if self.repair is not None else None,
+            "initial_execution": (
+                self.initial_execution.to_dict()
+                if self.initial_execution is not None
+                else None
+            ),
         }
 
 
@@ -151,6 +165,7 @@ class W1DirectRunner:
             input_tokens=(generation.generation.input_tokens if generation else 0),
             output_tokens=(generation.generation.output_tokens if generation else 0),
             llm_calls=int(generation is not None),
+            repair_calls=0,
             workflow_sparql_executions=0,
             evaluation_sparql_executions=int(execution is not None),
             generation_latency_seconds=(
@@ -319,6 +334,7 @@ class W4ExecuteRunner(W1DirectRunner):
             input_tokens=(generation.generation.input_tokens if generation else 0),
             output_tokens=(generation.generation.output_tokens if generation else 0),
             llm_calls=int(generation is not None),
+            repair_calls=0,
             workflow_sparql_executions=int(execution is not None),
             evaluation_sparql_executions=0,
             generation_latency_seconds=(
@@ -327,4 +343,221 @@ class W4ExecuteRunner(W1DirectRunner):
             # Evaluation reuses W4's internal result and adds no endpoint latency.
             evaluation_latency_seconds=0.0,
             total_latency_seconds=time.perf_counter() - started_at,
+        )
+
+
+class W5RepairRunner(W4ExecuteRunner):
+    """Run W5 with one conditional execution-guided repair."""
+
+    workflow_id = "W5"
+
+    def __init__(
+        self,
+        *,
+        experiment_id: str,
+        generation: SPARQLGenerationCapability,
+        repair: SPARQLRepairCapability,
+        executor: SPARQLExecutor,
+        answer_normalization: AnswerNormalizationConfig | None = None,
+    ) -> None:
+        super().__init__(
+            experiment_id=experiment_id,
+            generation=generation,
+            executor=executor,
+            answer_normalization=answer_normalization,
+        )
+        self.repair = repair
+
+    @staticmethod
+    def _combined_cost(
+        *,
+        started_at: float,
+        initial_generation: SPARQLGenerationOutput | None,
+        repair: SPARQLRepairOutput | None,
+        executions: int,
+    ) -> WorkflowCost:
+        generations = [
+            output.generation
+            for output in (initial_generation, repair)
+            if output is not None
+        ]
+        return WorkflowCost(
+            input_tokens=sum(output.input_tokens for output in generations),
+            output_tokens=sum(output.output_tokens for output in generations),
+            llm_calls=len(generations),
+            repair_calls=int(repair is not None),
+            workflow_sparql_executions=executions,
+            evaluation_sparql_executions=0,
+            generation_latency_seconds=sum(
+                output.latency_seconds for output in generations
+            ),
+            evaluation_latency_seconds=0.0,
+            total_latency_seconds=time.perf_counter() - started_at,
+        )
+
+    def run(self, example: QALD7Example, *, run_id: int = 0) -> WorkflowRunResult:
+        started_at = time.perf_counter()
+        initial = super().run(example, run_id=run_id)
+
+        # Generation and parsing failures occur before W5 can execute or repair.
+        if initial.execution is None:
+            return WorkflowRunResult(
+                **{
+                    **initial.__dict__,
+                    "cost": self._combined_cost(
+                        started_at=started_at,
+                        initial_generation=initial.generation,
+                        repair=None,
+                        executions=0,
+                    ),
+                }
+            )
+
+        initial_execution = initial.execution
+        execution_status = initial_execution.status.value
+        should_repair = execution_status in {"execution_error", "empty_result"}
+        if not should_repair:
+            return WorkflowRunResult(
+                **{
+                    **initial.__dict__,
+                    "cost": self._combined_cost(
+                        started_at=started_at,
+                        initial_generation=initial.generation,
+                        repair=None,
+                        executions=1,
+                    ),
+                    "initial_execution": initial_execution,
+                }
+            )
+
+        assert initial.generation is not None
+        assert initial.parsing is not None
+        assert initial.parsing.query is not None
+        try:
+            repair = self.repair.repair(
+                example.question,
+                failed_query=initial.parsing.query,
+                execution_feedback=initial_execution,
+            )
+        except Exception as exc:
+            return WorkflowRunResult(
+                **{
+                    **initial.__dict__,
+                    "status": WorkflowRunStatus.REPAIR_ERROR,
+                    "metrics": None,
+                    "cost": self._combined_cost(
+                        started_at=started_at,
+                        initial_generation=initial.generation,
+                        repair=None,
+                        executions=1,
+                    ),
+                    "error": _safe_error(exc, stage="sparql_repair"),
+                    "initial_execution": initial_execution,
+                }
+            )
+
+        repaired_parsing = parse_sparql_output(repair.raw_output)
+        if (
+            not repaired_parsing.succeeded
+            or repaired_parsing.query is None
+            or repaired_parsing.query_form is None
+        ):
+            return WorkflowRunResult(
+                **{
+                    **initial.__dict__,
+                    "status": WorkflowRunStatus.PARSE_ERROR,
+                    "parsing": repaired_parsing,
+                    "execution": None,
+                    "metrics": None,
+                    "cost": self._combined_cost(
+                        started_at=started_at,
+                        initial_generation=initial.generation,
+                        repair=repair,
+                        executions=1,
+                    ),
+                    "error": WorkflowRunError(
+                        stage="repair_parsing",
+                        error_type=repaired_parsing.status.value,
+                        message=(
+                            repaired_parsing.message
+                            or "Repaired SPARQL parsing failed."
+                        ),
+                    ),
+                    "repair": repair,
+                    "initial_execution": initial_execution,
+                }
+            )
+
+        try:
+            final_execution = self.executor.execute(
+                repaired_parsing.query,
+                query_form=repaired_parsing.query_form,
+            )
+        except Exception as exc:
+            return WorkflowRunResult(
+                **{
+                    **initial.__dict__,
+                    "status": WorkflowRunStatus.EXECUTION_ERROR,
+                    "parsing": repaired_parsing,
+                    "execution": None,
+                    "metrics": None,
+                    "cost": self._combined_cost(
+                        started_at=started_at,
+                        initial_generation=initial.generation,
+                        repair=repair,
+                        executions=1,
+                    ),
+                    "error": _safe_error(exc, stage="repair_execution"),
+                    "repair": repair,
+                    "initial_execution": initial_execution,
+                }
+            )
+
+        metrics = evaluate_answers(
+            gold_rows=example.gold_answer_rows,
+            gold_boolean=example.gold_boolean,
+            execution=final_execution,
+            normalization=self.answer_normalization,
+        )
+        succeeded = final_execution.succeeded
+        error = None
+        if not succeeded:
+            error = WorkflowRunError(
+                stage="repair_execution",
+                error_type=(
+                    final_execution.error_type.value
+                    if final_execution.error_type is not None
+                    else "unknown_error"
+                ),
+                message=(
+                    final_execution.error_message
+                    or "Repaired SPARQL execution failed."
+                ),
+            )
+        return WorkflowRunResult(
+            experiment_id=self.experiment_id,
+            workflow_id=self.workflow_id,
+            question_id=example.question_id,
+            run_id=run_id,
+            timestamp_utc=initial.timestamp_utc,
+            status=(
+                WorkflowRunStatus.COMPLETED
+                if succeeded
+                else WorkflowRunStatus.EXECUTION_ERROR
+            ),
+            question=example.question,
+            gold_sparql=example.gold_sparql,
+            generation=initial.generation,
+            parsing=repaired_parsing,
+            execution=final_execution,
+            metrics=metrics,
+            cost=self._combined_cost(
+                started_at=started_at,
+                initial_generation=initial.generation,
+                repair=repair,
+                executions=2,
+            ),
+            error=error,
+            repair=repair,
+            initial_execution=initial_execution,
         )
