@@ -12,6 +12,10 @@ from oracle_study.capabilities.sparql_generation import (
     SPARQLGenerationCapability,
     SPARQLGenerationOutput,
 )
+from oracle_study.capabilities.entity_relation_linking import (
+    EntityRelationLinkingCapability,
+    EntityRelationLinkingOutput,
+)
 from oracle_study.capabilities.sparql_repair import (
     SPARQLRepairCapability,
     SPARQLRepairOutput,
@@ -35,6 +39,7 @@ class WorkflowRunStatus(str, Enum):
     PARSE_ERROR = "parse_error"
     EXECUTION_ERROR = "execution_error"
     REPAIR_ERROR = "repair_error"
+    LINKING_ERROR = "linking_error"
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,7 @@ class WorkflowCost:
     input_tokens: int
     output_tokens: int
     llm_calls: int
+    linking_calls: int
     repair_calls: int
     workflow_sparql_executions: int
     evaluation_sparql_executions: int
@@ -81,6 +87,7 @@ class WorkflowRunResult:
     error: WorkflowRunError | None = None
     repair: SPARQLRepairOutput | None = None
     initial_execution: SPARQLExecutionResult | None = None
+    linking: EntityRelationLinkingOutput | None = None
 
     @property
     def quality(self) -> float:
@@ -115,6 +122,7 @@ class WorkflowRunResult:
                 if self.initial_execution is not None
                 else None
             ),
+            "linking": self.linking.to_dict() if self.linking is not None else None,
         }
 
 
@@ -160,16 +168,26 @@ class W1DirectRunner:
         started_at: float,
         generation: SPARQLGenerationOutput | None = None,
         execution: SPARQLExecutionResult | None = None,
+        linking: EntityRelationLinkingOutput | None = None,
     ) -> WorkflowCost:
+        generations = [
+            output
+            for output in (
+                linking.generation if linking is not None else None,
+                generation.generation if generation is not None else None,
+            )
+            if output is not None
+        ]
         return WorkflowCost(
-            input_tokens=(generation.generation.input_tokens if generation else 0),
-            output_tokens=(generation.generation.output_tokens if generation else 0),
-            llm_calls=int(generation is not None),
+            input_tokens=sum(output.input_tokens for output in generations),
+            output_tokens=sum(output.output_tokens for output in generations),
+            llm_calls=len(generations),
+            linking_calls=int(linking is not None),
             repair_calls=0,
             workflow_sparql_executions=0,
             evaluation_sparql_executions=int(execution is not None),
             generation_latency_seconds=(
-                generation.generation.latency_seconds if generation else 0.0
+                sum(output.latency_seconds for output in generations)
             ),
             evaluation_latency_seconds=(
                 execution.latency_seconds if execution else 0.0
@@ -184,10 +202,29 @@ class W1DirectRunner:
         timestamp = _timestamp_utc()
 
         try:
-            # W1 deliberately supplies no linking or schema evidence.
+            linking = self._link(example)
+        except Exception as exc:
+            return WorkflowRunResult(
+                experiment_id=self.experiment_id,
+                workflow_id=self.workflow_id,
+                question_id=example.question_id,
+                run_id=run_id,
+                timestamp_utc=timestamp,
+                status=WorkflowRunStatus.LINKING_ERROR,
+                question=example.question,
+                gold_sparql=example.gold_sparql,
+                generation=None,
+                parsing=None,
+                execution=None,
+                metrics=None,
+                cost=self._cost(started_at=started_at),
+                error=_safe_error(exc, stage="entity_relation_linking"),
+            )
+
+        try:
             generation = self.generation.generate(
                 question=example.question,
-                linking_evidence=None,
+                linking_evidence=(linking.evidence if linking is not None else None),
                 schema_evidence=None,
             )
         except Exception as exc:
@@ -204,8 +241,9 @@ class W1DirectRunner:
                 parsing=None,
                 execution=None,
                 metrics=None,
-                cost=self._cost(started_at=started_at),
+                cost=self._cost(started_at=started_at, linking=linking),
                 error=_safe_error(exc, stage="sparql_generation"),
+                linking=linking,
             )
 
         parsing = parse_sparql_output(generation.raw_output)
@@ -223,12 +261,17 @@ class W1DirectRunner:
                 parsing=parsing,
                 execution=None,
                 metrics=None,
-                cost=self._cost(started_at=started_at, generation=generation),
+                cost=self._cost(
+                    started_at=started_at,
+                    generation=generation,
+                    linking=linking,
+                ),
                 error=WorkflowRunError(
                     stage="sparql_parsing",
                     error_type=parsing.status.value,
                     message=parsing.message or "SPARQL parsing failed.",
                 ),
+                linking=linking,
             )
 
         try:
@@ -250,8 +293,13 @@ class W1DirectRunner:
                 parsing=parsing,
                 execution=None,
                 metrics=None,
-                cost=self._cost(started_at=started_at, generation=generation),
+                cost=self._cost(
+                    started_at=started_at,
+                    generation=generation,
+                    linking=linking,
+                ),
                 error=_safe_error(exc, stage=self.execution_stage),
+                linking=linking,
             )
 
         metrics = evaluate_answers(
@@ -294,9 +342,16 @@ class W1DirectRunner:
                 started_at=started_at,
                 generation=generation,
                 execution=execution,
+                linking=linking,
             ),
             error=error,
+            linking=linking,
         )
+
+    def _link(self, example: QALD7Example) -> EntityRelationLinkingOutput | None:
+        """Return optional grounding evidence before SPARQL generation."""
+
+        return None
 
     def run_many(
         self,
@@ -311,6 +366,32 @@ class W1DirectRunner:
         for example in examples:
             for run_id in range(repetitions):
                 yield self.run(example, run_id=run_id)
+
+
+class W2GroundedRunner(W1DirectRunner):
+    """Run W2 with one entity/relation linking call before generation."""
+
+    workflow_id = "W2"
+
+    def __init__(
+        self,
+        *,
+        experiment_id: str,
+        linking: EntityRelationLinkingCapability,
+        generation: SPARQLGenerationCapability,
+        executor: SPARQLExecutor,
+        answer_normalization: AnswerNormalizationConfig | None = None,
+    ) -> None:
+        super().__init__(
+            experiment_id=experiment_id,
+            generation=generation,
+            executor=executor,
+            answer_normalization=answer_normalization,
+        )
+        self.entity_relation_linking = linking
+
+    def _link(self, example: QALD7Example) -> EntityRelationLinkingOutput:
+        return self.entity_relation_linking.link(example.question)
 
 
 class W4ExecuteRunner(W1DirectRunner):
@@ -329,16 +410,26 @@ class W4ExecuteRunner(W1DirectRunner):
         started_at: float,
         generation: SPARQLGenerationOutput | None = None,
         execution: SPARQLExecutionResult | None = None,
+        linking: EntityRelationLinkingOutput | None = None,
     ) -> WorkflowCost:
+        generations = [
+            output
+            for output in (
+                linking.generation if linking is not None else None,
+                generation.generation if generation is not None else None,
+            )
+            if output is not None
+        ]
         return WorkflowCost(
-            input_tokens=(generation.generation.input_tokens if generation else 0),
-            output_tokens=(generation.generation.output_tokens if generation else 0),
-            llm_calls=int(generation is not None),
+            input_tokens=sum(output.input_tokens for output in generations),
+            output_tokens=sum(output.output_tokens for output in generations),
+            llm_calls=len(generations),
+            linking_calls=int(linking is not None),
             repair_calls=0,
             workflow_sparql_executions=int(execution is not None),
             evaluation_sparql_executions=0,
             generation_latency_seconds=(
-                generation.generation.latency_seconds if generation else 0.0
+                sum(output.latency_seconds for output in generations)
             ),
             # Evaluation reuses W4's internal result and adds no endpoint latency.
             evaluation_latency_seconds=0.0,
@@ -385,6 +476,7 @@ class W5RepairRunner(W4ExecuteRunner):
             input_tokens=sum(output.input_tokens for output in generations),
             output_tokens=sum(output.output_tokens for output in generations),
             llm_calls=len(generations),
+            linking_calls=0,
             repair_calls=int(repair is not None),
             workflow_sparql_executions=executions,
             evaluation_sparql_executions=0,

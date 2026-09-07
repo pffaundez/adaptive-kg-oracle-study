@@ -27,6 +27,7 @@ steps:
 
 limits:
   max_initial_generations: 1
+  max_linking_calls: 1
   max_repairs: 0
   max_sparql_executions: 0
   max_entity_candidates: 10

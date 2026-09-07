@@ -16,7 +16,7 @@ dataset:
   endpoint: https://dbpedia.org/sparql
   language: en
 
-  # Applied after the gold-snapshot eligibility filter.
+  # Pilot configuration. Change to null for the definitive run.
   max_questions: 10
   strict: true
 
@@ -41,6 +41,11 @@ model:
   repetitions: 1
 
 capabilities:
+  entity_relation_linking:
+    prompt_template: prompts/entity_relation_linking.txt
+    max_entity_candidates: 10
+    max_relation_candidates: 10
+
   sparql_generation:
     prompt_template: prompts/sparql_generation.txt
 
@@ -52,8 +57,7 @@ workflows:
 
   # Enable workflows progressively during implementation.
   enabled:
-    #- W1-direct.yaml
-    - W5-repair.yaml
+    - W2-grounded.yaml
 
 execution:
   sparql_timeout_seconds: 30
@@ -92,6 +96,8 @@ cost:
     - input_tokens
     - output_tokens
     - llm_calls
+    - linking_calls
+    - repair_calls
     - workflow_sparql_executions
     - evaluation_sparql_executions
     - generation_latency_seconds
@@ -110,7 +116,6 @@ oracle:
     - 0.1
 
 output:
-  # Snapshot-specific directory prevents collisions with historical-gold runs.
   directory: results/experiment_a
   result_file_template: "{workflow_id}-results.jsonl"
 

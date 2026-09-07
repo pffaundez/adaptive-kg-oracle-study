@@ -22,6 +22,10 @@ from oracle_study.capabilities.sparql_generation import (  # noqa: E402
     SPARQLGenerationCapability,
     SPARQLGenerationConfig,
 )
+from oracle_study.capabilities.entity_relation_linking import (  # noqa: E402
+    EntityRelationLinkingCapability,
+    EntityRelationLinkingConfig,
+)
 from oracle_study.capabilities.sparql_repair import (  # noqa: E402
     SPARQLRepairCapability,
     SPARQLRepairConfig,
@@ -44,6 +48,7 @@ from oracle_study.models.huggingface_model import (  # noqa: E402
 )
 from oracle_study.workflows.runner import (  # noqa: E402
     W1DirectRunner,
+    W2GroundedRunner,
     W4ExecuteRunner,
     W5RepairRunner,
 )
@@ -151,14 +156,15 @@ def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
         )
     supported = {
         "W1-direct.yaml": ("W1", W1DirectRunner),
+        "W2-grounded.yaml": ("W2", W2GroundedRunner),
         "W4-execute.yaml": ("W4", W4ExecuteRunner),
         "W5-repair.yaml": ("W5", W5RepairRunner),
     }
     filename = enabled[0]
     if filename not in supported:
         raise ExperimentConfigurationError(
-            "Supported workflows are W1-direct.yaml, W4-execute.yaml, "
-            "and W5-repair.yaml."
+            "Supported workflows are W1-direct.yaml, W2-grounded.yaml, "
+            "W4-execute.yaml, and W5-repair.yaml."
         )
     return supported[filename]
 
@@ -227,6 +233,12 @@ def main() -> int:
     evaluation_data = _mapping(config.get("evaluation"), label="evaluation")
     output_data = _mapping(config.get("output"), label="output")
     workflow_id, runner_class = _select_workflow(workflows)
+    linking_data = None
+    if workflow_id == "W2":
+        linking_data = _mapping(
+            capabilities.get("entity_relation_linking"),
+            label="capabilities.entity_relation_linking",
+        )
     repair_data = None
     if workflow_id == "W5":
         repair_data = _mapping(
@@ -288,6 +300,14 @@ def main() -> int:
         linking_evidence=None,
         schema_evidence=None,
     )
+    linking = None
+    if linking_data is not None:
+        linking_config = EntityRelationLinkingConfig.from_mapping(
+            linking_data,
+            project_root=project_root,
+        )
+        linking = EntityRelationLinkingCapability(model, linking_config)
+        linking.build_messages(examples[0].question)
     repair = None
     if repair_data is not None:
         repair_config = SPARQLRepairConfig.from_mapping(
@@ -329,6 +349,8 @@ def main() -> int:
     }
     if repair is not None:
         runner_kwargs["repair"] = repair
+    if linking is not None:
+        runner_kwargs["linking"] = linking
     runner = runner_class(**runner_kwargs)
 
     repetitions = int(model_data.get("repetitions", 1))

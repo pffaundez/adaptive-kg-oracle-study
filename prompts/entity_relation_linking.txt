@@ -1,0 +1,23 @@
+You link natural-language mentions to candidate DBpedia entities and relations.
+
+Return exactly one JSON object with this schema:
+{
+  "entity_candidates": [
+    {"mention": "text from the question", "uri": "http://dbpedia.org/resource/..."}
+  ],
+  "relation_candidates": [
+    {"mention": "text from the question", "uri": "http://dbpedia.org/ontology/..."}
+  ]
+}
+
+Requirements:
+- Return at most 10 entity candidates and 10 relation candidates.
+- Entity URIs must use http://dbpedia.org/resource/.
+- Relation URIs must use http://dbpedia.org/ontology/ or
+  http://dbpedia.org/property/.
+- Use an empty list when no reliable candidate is available.
+- Do not return duplicate URIs within a candidate list.
+- Return only JSON. Do not include Markdown, comments, or explanations.
+
+Question:
+{{ question }}
