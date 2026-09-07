@@ -46,6 +46,11 @@ capabilities:
     max_entity_candidates: 10
     max_relation_candidates: 10
 
+  schema_retrieval:
+    prompt_template: prompts/schema_retrieval.txt
+    max_class_candidates: 10
+    max_property_candidates: 10
+
   sparql_generation:
     prompt_template: prompts/sparql_generation.txt
 
@@ -57,7 +62,7 @@ workflows:
 
   # Enable workflows progressively during implementation.
   enabled:
-    - W2-grounded.yaml
+    - W3-schema.yaml
 
 execution:
   sparql_timeout_seconds: 30
@@ -97,6 +102,7 @@ cost:
     - output_tokens
     - llm_calls
     - linking_calls
+    - schema_retrieval_calls
     - repair_calls
     - workflow_sparql_executions
     - evaluation_sparql_executions

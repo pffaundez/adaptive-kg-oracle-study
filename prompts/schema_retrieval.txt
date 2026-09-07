@@ -1,0 +1,23 @@
+You identify candidate DBpedia schema terms relevant to a question.
+
+Return exactly one JSON object with this schema:
+{
+  "class_candidates": [
+    {"mention": "concept in the question", "uri": "http://dbpedia.org/ontology/..."}
+  ],
+  "property_candidates": [
+    {"mention": "relation in the question", "uri": "http://dbpedia.org/ontology/..."}
+  ]
+}
+
+Requirements:
+- Return at most 10 class candidates and 10 property candidates.
+- Class URIs must use http://dbpedia.org/ontology/.
+- Property URIs may use http://dbpedia.org/ontology/ or
+  http://dbpedia.org/property/.
+- Use an empty list when no reliable candidate is available.
+- Do not return duplicate URIs within a candidate list.
+- Return only JSON. Do not include Markdown, comments, or explanations.
+
+Question:
+{{ question }}

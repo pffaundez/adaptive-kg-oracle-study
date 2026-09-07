@@ -25,10 +25,10 @@ steps:
 
 limits:
   max_initial_generations: 1
+  max_schema_retrieval_calls: 1
   max_repairs: 0
   max_sparql_executions: 0
 
 output:
   final_query:
     select: generated_query
-

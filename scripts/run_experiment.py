@@ -26,6 +26,10 @@ from oracle_study.capabilities.entity_relation_linking import (  # noqa: E402
     EntityRelationLinkingCapability,
     EntityRelationLinkingConfig,
 )
+from oracle_study.capabilities.schema_retrieval import (  # noqa: E402
+    SchemaRetrievalCapability,
+    SchemaRetrievalConfig,
+)
 from oracle_study.capabilities.sparql_repair import (  # noqa: E402
     SPARQLRepairCapability,
     SPARQLRepairConfig,
@@ -49,6 +53,7 @@ from oracle_study.models.huggingface_model import (  # noqa: E402
 from oracle_study.workflows.runner import (  # noqa: E402
     W1DirectRunner,
     W2GroundedRunner,
+    W3SchemaRunner,
     W4ExecuteRunner,
     W5RepairRunner,
 )
@@ -157,6 +162,7 @@ def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
     supported = {
         "W1-direct.yaml": ("W1", W1DirectRunner),
         "W2-grounded.yaml": ("W2", W2GroundedRunner),
+        "W3-schema.yaml": ("W3", W3SchemaRunner),
         "W4-execute.yaml": ("W4", W4ExecuteRunner),
         "W5-repair.yaml": ("W5", W5RepairRunner),
     }
@@ -164,7 +170,7 @@ def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
     if filename not in supported:
         raise ExperimentConfigurationError(
             "Supported workflows are W1-direct.yaml, W2-grounded.yaml, "
-            "W4-execute.yaml, and W5-repair.yaml."
+            "W3-schema.yaml, W4-execute.yaml, and W5-repair.yaml."
         )
     return supported[filename]
 
@@ -239,6 +245,12 @@ def main() -> int:
             capabilities.get("entity_relation_linking"),
             label="capabilities.entity_relation_linking",
         )
+    schema_data = None
+    if workflow_id == "W3":
+        schema_data = _mapping(
+            capabilities.get("schema_retrieval"),
+            label="capabilities.schema_retrieval",
+        )
     repair_data = None
     if workflow_id == "W5":
         repair_data = _mapping(
@@ -308,6 +320,14 @@ def main() -> int:
         )
         linking = EntityRelationLinkingCapability(model, linking_config)
         linking.build_messages(examples[0].question)
+    schema = None
+    if schema_data is not None:
+        schema_config = SchemaRetrievalConfig.from_mapping(
+            schema_data,
+            project_root=project_root,
+        )
+        schema = SchemaRetrievalCapability(model, schema_config)
+        schema.build_messages(examples[0].question)
     repair = None
     if repair_data is not None:
         repair_config = SPARQLRepairConfig.from_mapping(
@@ -351,6 +371,8 @@ def main() -> int:
         runner_kwargs["repair"] = repair
     if linking is not None:
         runner_kwargs["linking"] = linking
+    if schema is not None:
+        runner_kwargs["schema"] = schema
     runner = runner_class(**runner_kwargs)
 
     repetitions = int(model_data.get("repetitions", 1))

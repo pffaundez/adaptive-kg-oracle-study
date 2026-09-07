@@ -147,7 +147,9 @@ def _parse_candidates(
                 f"{label}[{index}].uri must not contain whitespace."
             )
         if uri in seen:
-            raise EntityRelationLinkingError(f"Duplicate URI in {label}: {uri}")
+            # Exact duplicates add no evidence. Keep the first occurrence so a
+            # harmless formatting repetition does not fail the whole workflow.
+            continue
         seen.add(uri)
         candidates.append(LinkingCandidate(mention=mention.strip(), uri=uri))
     return tuple(candidates)
