@@ -154,12 +154,10 @@ def _result_path(
     return directory / filename
 
 
-def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
+def _select_workflows(workflows: Mapping[str, Any]) -> list[tuple[str, type]]:
     enabled = workflows.get("enabled")
-    if not isinstance(enabled, list) or len(enabled) != 1:
-        raise ExperimentConfigurationError(
-            "Enable exactly one workflow while implementations are tested."
-        )
+    if not isinstance(enabled, list) or not enabled:
+        raise ExperimentConfigurationError("Enable at least one workflow.")
     supported = {
         "W1-direct.yaml": ("W1", W1DirectRunner),
         "W2-grounded.yaml": ("W2", W2GroundedRunner),
@@ -168,13 +166,17 @@ def _select_workflow(workflows: Mapping[str, Any]) -> tuple[str, type]:
         "W5-repair.yaml": ("W5", W5RepairRunner),
         "W6-full.yaml": ("W6", W6FullRunner),
     }
-    filename = enabled[0]
-    if filename not in supported:
-        raise ExperimentConfigurationError(
-            "Supported workflows are W1-direct.yaml, W2-grounded.yaml, "
-            "W3-schema.yaml, W4-execute.yaml, W5-repair.yaml, and W6-full.yaml."
-        )
-    return supported[filename]
+    if len(set(enabled)) != len(enabled):
+        raise ExperimentConfigurationError("Enabled workflows must not be duplicated.")
+    selected: list[tuple[str, type]] = []
+    for filename in enabled:
+        if filename not in supported:
+            raise ExperimentConfigurationError(
+                "Supported workflows are W1-direct.yaml, W2-grounded.yaml, "
+                "W3-schema.yaml, W4-execute.yaml, W5-repair.yaml, and W6-full.yaml."
+            )
+        selected.append(supported[filename])
+    return selected
 
 
 def _read_summary(path: Path) -> dict[str, Any]:
@@ -240,21 +242,22 @@ def main() -> int:
     execution_data = _mapping(config.get("execution"), label="execution")
     evaluation_data = _mapping(config.get("evaluation"), label="evaluation")
     output_data = _mapping(config.get("output"), label="output")
-    workflow_id, runner_class = _select_workflow(workflows)
+    workflow_specs = _select_workflows(workflows)
+    workflow_ids = {workflow_id for workflow_id, _ in workflow_specs}
     linking_data = None
-    if workflow_id in {"W2", "W6"}:
+    if workflow_ids & {"W2", "W6"}:
         linking_data = _mapping(
             capabilities.get("entity_relation_linking"),
             label="capabilities.entity_relation_linking",
         )
     schema_data = None
-    if workflow_id in {"W3", "W6"}:
+    if workflow_ids & {"W3", "W6"}:
         schema_data = _mapping(
             capabilities.get("schema_retrieval"),
             label="capabilities.schema_retrieval",
         )
     repair_data = None
-    if workflow_id in {"W5", "W6"}:
+    if workflow_ids & {"W5", "W6"}:
         repair_data = _mapping(
             capabilities.get("sparql_repair"),
             label="capabilities.sparql_repair",
@@ -300,11 +303,14 @@ def main() -> int:
         endpoint=str(endpoint) if endpoint is not None else None,
     )
     normalization = _normalization_config(evaluation_data)
-    result_path = _result_path(
-        project_root,
-        output_data,
-        workflow_id=workflow_id,
-    )
+    result_paths = {
+        workflow_id: _result_path(
+            project_root,
+            output_data,
+            workflow_id=workflow_id,
+        )
+        for workflow_id, _ in workflow_specs
+    }
 
     model = HuggingFaceChatModel(model_config)
     generation = SPARQLGenerationCapability(model, generation_config)
@@ -350,32 +356,38 @@ def main() -> int:
 
     preview = {
         "experiment_id": experiment_id,
-        "workflow_id": workflow_id,
+        "workflows": [workflow_id for workflow_id, _ in workflow_specs],
         "dataset": str(dataset_path),
         "questions": len(examples),
         "model_id": model_config.model_id,
         "requested_revision": model_config.revision,
         "cuda_visible_devices": visible_devices,
-        "result_path": str(result_path),
+        "result_paths": {
+            workflow_id: str(result_paths[workflow_id])
+            for workflow_id, _ in workflow_specs
+        },
     }
     print(json.dumps(preview, indent=2, ensure_ascii=False))
     if args.dry_run:
         print("Dry run completed; model weights were not loaded.")
         return 0
 
-    runner_kwargs = {
-        "experiment_id": experiment_id,
-        "generation": generation,
-        "executor": SPARQLExecutor(executor_config),
-        "answer_normalization": normalization,
-    }
-    if repair is not None:
-        runner_kwargs["repair"] = repair
-    if linking is not None:
-        runner_kwargs["linking"] = linking
-    if schema is not None:
-        runner_kwargs["schema"] = schema
-    runner = runner_class(**runner_kwargs)
+    executor = SPARQLExecutor(executor_config)
+    runners = {}
+    for workflow_id, runner_class in workflow_specs:
+        runner_kwargs = {
+            "experiment_id": experiment_id,
+            "generation": generation,
+            "executor": executor,
+            "answer_normalization": normalization,
+        }
+        if workflow_id in {"W5", "W6"}:
+            runner_kwargs["repair"] = repair
+        if workflow_id in {"W2", "W6"}:
+            runner_kwargs["linking"] = linking
+        if workflow_id in {"W3", "W6"}:
+            runner_kwargs["schema"] = schema
+        runners[workflow_id] = runner_class(**runner_kwargs)
 
     repetitions = int(model_data.get("repetitions", 1))
     if repetitions <= 0:
@@ -384,42 +396,48 @@ def main() -> int:
     output_data_duplicate_policy = str(
         output_data.get("duplicate_policy", "skip")
     )
-    processed = skipped = 0
+    all_summaries: dict[str, Any] = {}
     try:
-        with JSONLResultWriter(
-            result_path,
-            duplicate_policy=output_data_duplicate_policy,
-            flush_every=int(output_data.get("flush_every", 1)),
-            fsync=bool(output_data.get("fsync", False)),
-        ) as writer:
-            total = len(examples) * repetitions
-            for example in examples:
-                for run_id in range(repetitions):
-                    key = ResultKey(
-                        experiment_id,
-                        workflow_id,
-                        example.question_id,
-                        run_id,
-                    )
-                    if writer.contains(key) and output_data_duplicate_policy == "skip":
-                        skipped += 1
-                        continue
-                    result = runner.run(example, run_id=run_id)
-                    writer.write(result)
-                    processed += 1
-                    print(
-                        f"[{processed + skipped}/{total}] "
-                        f"question={example.question_id} run={run_id} "
-                        f"status={result.status.value} f1={result.quality:.4f}",
-                        flush=True,
-                    )
+        for workflow_id, _ in workflow_specs:
+            processed = skipped = 0
+            result_path = result_paths[workflow_id]
+            runner = runners[workflow_id]
+            print(f"Starting workflow {workflow_id}", flush=True)
+            with JSONLResultWriter(
+                result_path,
+                duplicate_policy=output_data_duplicate_policy,
+                flush_every=int(output_data.get("flush_every", 1)),
+                fsync=bool(output_data.get("fsync", False)),
+            ) as writer:
+                total = len(examples) * repetitions
+                for example in examples:
+                    for run_id in range(repetitions):
+                        key = ResultKey(
+                            experiment_id,
+                            workflow_id,
+                            example.question_id,
+                            run_id,
+                        )
+                        if writer.contains(key) and output_data_duplicate_policy == "skip":
+                            skipped += 1
+                            continue
+                        result = runner.run(example, run_id=run_id)
+                        writer.write(result)
+                        processed += 1
+                        print(
+                            f"[{workflow_id} {processed + skipped}/{total}] "
+                            f"question={example.question_id} run={run_id} "
+                            f"status={result.status.value} f1={result.quality:.4f}",
+                            flush=True,
+                        )
+            summary = _read_summary(result_path)
+            summary["processed_this_invocation"] = processed
+            summary["skipped_existing"] = skipped
+            all_summaries[workflow_id] = summary
     finally:
         model.unload()
 
-    summary = _read_summary(result_path)
-    summary["processed_this_invocation"] = processed
-    summary["skipped_existing"] = skipped
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(json.dumps({"workflow_summaries": all_summaries}, indent=2, ensure_ascii=False))
     return 0
 
 

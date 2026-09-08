@@ -17,7 +17,7 @@ dataset:
   language: en
 
   # Pilot configuration. Change to null for the definitive run.
-  max_questions: 10
+  max_questions: null
   strict: true
 
 model:
@@ -62,6 +62,11 @@ workflows:
 
   # Enable workflows progressively during implementation.
   enabled:
+    - W1-direct.yaml
+    - W2-grounded.yaml
+    - W3-schema.yaml
+    - W4-execute.yaml
+    - W5-repair.yaml
     - W6-full.yaml
 
 execution:
